@@ -10,6 +10,15 @@
 
 #include <pthread.h>
 
+#ifdef __APPLE__
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
+
+#ifdef __linux__
+#include <sys/statfs.h>
+#endif
+
 #include "utils.h"
 #define DEBUG_FLAG SEAFILE_DEBUG_SYNC
 #include "log.h"
@@ -3645,6 +3654,39 @@ unlock_office_file_on_server (SeafRepo *repo, const char *path)
 
 #endif
 
+#ifndef WIN32
+static gint64
+get_available_disk_space () {
+    int ret;
+    struct statfs disk_info;
+
+    ret = statfs(seaf->worktree_dir, &disk_info);
+    if (ret < 0) {
+        seaf_warning ("Failed to get disk space: %s\n",strerror(errno));
+        return -1;
+    }
+    gint64 blocksize = disk_info.f_bsize;
+
+    gint64 available_disk = disk_info.f_bavail * blocksize;
+
+    return available_disk;
+}
+#else
+static gint64
+get_available_disk_space () {
+    gint64 available_disk;
+    if (!GetDiskFreeSpaceExA(seaf->worktree_dir,
+                            (PULARGE_INTEGER)&available_disk,
+                            NULL,
+                            NULL)) {
+        seaf_warning ("Failed to get disk space: %s\n",strerror(errno));
+        return -1;
+    }
+
+    return available_disk;
+}
+#endif
+
 static int
 apply_worktree_changes_to_index (SeafRepo *repo, struct index_state *istate,
                                  SeafileCrypt *crypt, GList *ignore_list,
@@ -3653,6 +3695,7 @@ apply_worktree_changes_to_index (SeafRepo *repo, struct index_state *istate,
     WTStatus *status;
     WTEvent *event, *next_event;
     gboolean not_found;
+    int ret = 0;
 #if defined WIN32 || defined __APPLE__
     char *office_path = NULL;
 #endif
@@ -3682,7 +3725,15 @@ apply_worktree_changes_to_index (SeafRepo *repo, struct index_state *istate,
 
     gint64 total_size = 0;
 
+    gint64 available_disk = get_available_disk_space ();
+
     while (1) {
+        if (total_size >= available_disk) {
+            send_file_sync_error_notification (repo->id, repo->name, "",
+                                               SYNC_ERROR_ID_NOT_ENOUGH_DISK_SPACE);
+            ret = -1;
+            goto out;
+        }
         pthread_mutex_lock (&status->q_lock);
         event = g_queue_pop_head (status->event_q);
         next_event = g_queue_peek_head (status->event_q);
@@ -3851,7 +3902,7 @@ out:
     string_list_free (scanned_dirs);
     string_list_free (scanned_del_dirs);
 
-    return 0;
+    return ret;
 }
 
 static int
