@@ -164,6 +164,11 @@ static SyncErrorInfo sync_error_info_tbl[] = {
         SYNC_ERROR_LEVEL_FILE,
         "A folder that may contain not-yet-uploaded files is moved to seafile-recycle-bin folder"
     },
+    {
+        SYNC_ERROR_ID_NOT_ENOUGH_DISK_SPACE,
+        SYNC_ERROR_LEVEL_FILE,
+        "There is not enough space on the disk"
+    },
 };
 
 const char *
